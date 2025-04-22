@@ -1,0 +1,18 @@
+# Ignore build output
+.next/
+out/
+
+# Ignore node modules
+node_modules/
+
+# Ignore specific problematic files
+app/AuthContext.tsx
+app/Login.tsx
+app/S3Dashboard.tsx
+app/api/s3/delete/route.ts
+app/api/s3/download/route.ts
+app/api/s3/list/route.ts
+app/api/s3/upload/route.ts
+app/dashboard/page.tsx
+components/ui/button.tsx
+components/ui/input.tsx
