@@ -37,35 +37,35 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
     <div className="fixed inset-0 flex items-center justify-center min-h-screen bg-black/80">
       <div className="relative bg-background rounded-lg shadow-lg w-full max-w-md mx-4">
         {/* Close button */}
-        <button 
+        {/* <button
           className="absolute right-4 top-4 text-muted-foreground hover:text-foreground transition-colors"
           onClick={() => {}}
           aria-label="Close"
         >
           <X size={20} />
-        </button>
-        
+        </button> */}
+
         {/* Login form */}
         <div className="p-6 space-y-6">
           <div className="space-y-2">
             <h2 className="text-2xl font-semibold tracking-tight">Login</h2>
             <p className="text-muted-foreground">Please login again to continue using the application.</p>
           </div>
-          
+
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
-              <label htmlFor="email" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">Email</label>
+              <label htmlFor="email" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">Username or Email</label>
               <Input
                 id="email"
-                type="text" 
+                type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 className="w-full"
-                placeholder="team@mynaui.com"
+                placeholder="username or email"
                 required
               />
             </div>
-            
+
             <div className="space-y-2">
               <label htmlFor="password" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">Password</label>
               <Input
@@ -78,17 +78,17 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
                 required
               />
             </div>
-            
+
             {error && <div className="text-destructive text-sm">{error}</div>}
-            
+
             <div className="flex justify-end space-x-2 pt-2">
-              <Button
+              {/* <Button
                 type="button"
                 variant="outline"
                 onClick={() => {}}
               >
                 Cancel
-              </Button>
+              </Button> */}
               <Button
                 type="submit"
                 disabled={loading}
