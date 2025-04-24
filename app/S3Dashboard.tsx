@@ -553,7 +553,7 @@ export default function S3Dashboard() {
                   Upload Folder
                 </Button>
 
-                <Button
+                {/* <Button
                   type="button"
                   onClick={() => {
                     // Create a file input that accepts multiple files
@@ -573,7 +573,7 @@ export default function S3Dashboard() {
                 >
                   <Upload className="h-4 w-4" />
                   Upload to Folder
-                </Button>
+                </Button> */}
               </div>
             </div>
           </div>
