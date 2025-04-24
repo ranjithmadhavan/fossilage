@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useAuth } from "./AuthContext";
 import { usePagination } from "@/components/hooks/use-pagination";
 import { cn } from "@/lib/utils";
@@ -38,23 +38,26 @@ import {
   getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table";
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Download, Trash2, Upload } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Download, Folder, FolderOpen, ArrowLeft, Trash2, Upload, File as FileIcon } from "lucide-react";
 
-type S3File = {
+type S3Item = {
   id: string;
   name: string;
-  lastModified: string;
-  size: number;
-  type: string;
+  fullPath: string;
+  lastModified?: string;
+  size?: number;
+  type: "file" | "folder";
 };
 
 export default function S3Dashboard() {
-  const [rawFiles, setRawFiles] = useState<string[]>([]);
-  const [files, setFiles] = useState<S3File[]>([]);
+  const [items, setItems] = useState<S3Item[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [uploading, setUploading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [currentPath, setCurrentPath] = useState("");
+  const [breadcrumbs, setBreadcrumbs] = useState<{name: string, path: string}[]>([]);
+  const folderInputRef = useRef<HTMLInputElement>(null);
   const { logout, loggedIn } = useAuth();
 
   const pageSize = 5;
@@ -73,27 +76,34 @@ export default function S3Dashboard() {
 
   const [rowSelection, setRowSelection] = useState({});
 
-  const fetchFiles = async () => {
+  const fetchItems = async (path = "") => {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch("/api/s3/list");
+      const res = await fetch(`/api/s3/list?folderPath=${encodeURIComponent(path)}`);
       const data = await res.json();
       if (res.ok) {
-        setRawFiles(data.files || []);
-        // Transform raw file names into structured data for the table
-        const formattedFiles = (data.files || []).map((filename: string) => {
-          return {
-            id: filename,
-            name: filename,
-            lastModified: new Date().toISOString(), // Placeholder, actual data would come from S3 metadata
-            size: 0, // Placeholder, actual data would come from S3 metadata
-            type: filename.split('.').pop() || "",
-          };
-        });
-        setFiles(formattedFiles);
+        setItems(data.items || []);
+        setCurrentPath(data.currentPath || "");
+
+        // Update breadcrumbs
+        const pathParts = path.split('/');
+        const crumbs = [{ name: "Home", path: "" }];
+
+        let currentPathAccumulator = "";
+        for (let i = 0; i < pathParts.length; i++) {
+          if (pathParts[i]) {
+            currentPathAccumulator += (currentPathAccumulator ? "/" : "") + pathParts[i];
+            crumbs.push({
+              name: pathParts[i],
+              path: currentPathAccumulator
+            });
+          }
+        }
+
+        setBreadcrumbs(crumbs);
       } else {
-        setError(data.message || "Failed to fetch files");
+        setError(data.message || "Failed to fetch items");
       }
     } catch (err) {
       setError("Network error");
@@ -103,20 +113,34 @@ export default function S3Dashboard() {
   };
 
   useEffect(() => {
-    fetchFiles();
+    fetchItems();
   }, []);
 
-  const handleDownload = async (filename: string) => {
-    window.location.href = `/api/s3/download?filename=${encodeURIComponent(filename)}`;
+  const handleDownload = async (item: S3Item) => {
+    if (item.type === "file") {
+      window.location.href = `/api/s3/download?path=${encodeURIComponent(item.fullPath)}&type=file`;
+    } else {
+      window.location.href = `/api/s3/download?path=${encodeURIComponent(item.fullPath)}&type=folder`;
+    }
   };
 
-  const handleDelete = async (filename: string) => {
-    if (!confirm(`Delete ${filename}?`)) return;
+  const handleFolderClick = (folderPath: string) => {
+    // Remove trailing slash if present for consistent navigation
+    const normalizedPath = folderPath.endsWith('/') ? folderPath.slice(0, -1) : folderPath;
+    fetchItems(normalizedPath);
+  };
+
+  const handleBreadcrumbClick = (path: string) => {
+    fetchItems(path);
+  };
+
+  const handleDelete = async (item: S3Item) => {
+    if (!confirm(`Delete ${item.name}?`)) return;
     setLoading(true);
     try {
-      const res = await fetch(`/api/s3/delete?filename=${encodeURIComponent(filename)}`, { method: "DELETE" });
+      const res = await fetch(`/api/s3/delete?path=${encodeURIComponent(item.fullPath)}&type=${item.type}`, { method: "DELETE" });
       if (res.ok) {
-        fetchFiles();
+        fetchItems(currentPath);
       } else {
         const data = await res.json();
         setError(data.message || "Delete failed");
@@ -136,12 +160,13 @@ export default function S3Dashboard() {
     try {
       const formData = new FormData();
       formData.append("file", selectedFile);
+      formData.append("currentPath", currentPath);
       const res = await fetch("/api/s3/upload", {
         method: "POST",
         body: formData,
       });
       if (res.ok) {
-        fetchFiles();
+        fetchItems(currentPath);
         setSelectedFile(null);
       } else {
         const data = await res.json();
@@ -154,20 +179,157 @@ export default function S3Dashboard() {
     }
   };
 
+  const createFolder = async () => {
+    const folderName = prompt("Enter folder name:");
+    if (!folderName) return;
+
+    setLoading(true);
+    setError("");
+
+    try {
+      // Create an empty file with a special name to represent the folder
+      const formData = new FormData();
+      // Create an empty file
+      const emptyFile = new File([""], ".folder", { type: "text/plain" });
+      formData.append("file", emptyFile);
+      formData.append("currentPath", currentPath ? `${currentPath}/${folderName}` : folderName);
+      formData.append("createFolder", "true");
+
+      const res = await fetch("/api/s3/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (res.ok) {
+        fetchItems(currentPath);
+      } else {
+        const data = await res.json();
+        setError(data.message || "Failed to create folder");
+      }
+    } catch (err) {
+      setError("Network error during folder creation");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleFileUploadToFolder = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+
+    // Prompt for folder name
+    const folderName = prompt("Enter folder name for these files:");
+    if (!folderName) return;
+
+    setUploading(true);
+    setError("");
+
+    try {
+      const files = Array.from(e.target.files);
+
+      // Upload each file to the specified folder
+      for (const file of files) {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("currentPath", currentPath ? `${currentPath}/${folderName}` : folderName);
+
+        const res = await fetch("/api/s3/upload", {
+          method: "POST",
+          body: formData,
+        });
+
+        if (!res.ok) {
+          const data = await res.json();
+          setError(data.message || `Failed to upload ${file.name}`);
+          break;
+        }
+      }
+
+      // Refresh the file list
+      fetchItems(currentPath);
+
+      // Reset the file input
+      if (e.target.value) {
+        e.target.value = "";
+      }
+    } catch (err) {
+      setError("Network error during upload");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleFolderUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+
+    setUploading(true);
+    setError("");
+
+    try {
+      const files = Array.from(e.target.files);
+      let hasWebkitRelativePath = false;
+
+      // First check if we have proper folder structure
+      for (const file of files) {
+        if ((file as any).webkitRelativePath) {
+          hasWebkitRelativePath = true;
+          break;
+        }
+      }
+
+      // If we don't have proper folder structure, use the alternative method
+      if (!hasWebkitRelativePath) {
+        setUploading(false);
+        return handleFileUploadToFolder(e);
+      }
+
+      // Process files with folder structure
+      for (const file of files) {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("currentPath", currentPath);
+        formData.append("preservePath", "true");
+        formData.append("webkitRelativePath", (file as any).webkitRelativePath || "");
+
+        const res = await fetch("/api/s3/upload", {
+          method: "POST",
+          body: formData,
+        });
+
+        if (!res.ok) {
+          const data = await res.json();
+          setError(data.message || `Failed to upload ${file.name}`);
+          break;
+        }
+      }
+
+      // Refresh the file list
+      fetchItems(currentPath);
+
+      // Reset the file input
+      if (folderInputRef.current) {
+        folderInputRef.current.value = "";
+      }
+    } catch (err) {
+      setError("Network error during folder upload");
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const handleBulkDelete = async () => {
     const selectedRows = table.getSelectedRowModel().rows;
     if (selectedRows.length === 0) return;
 
-    const fileNames = selectedRows.map(row => row.original.name);
-    if (!confirm(`Delete ${fileNames.length} selected file(s)?`)) return;
+    const selectedItems = selectedRows.map(row => row.original);
+    if (!confirm(`Delete ${selectedItems.length} selected item(s)?`)) return;
 
     setLoading(true);
     try {
       // In a real implementation, you might want to use Promise.all to delete multiple files in parallel
-      for (const fileName of fileNames) {
-        await fetch(`/api/s3/delete?filename=${encodeURIComponent(fileName)}`, { method: "DELETE" });
+      for (const item of selectedItems) {
+        await fetch(`/api/s3/delete?path=${encodeURIComponent(item.fullPath)}&type=${item.type}`, { method: "DELETE" });
       }
-      fetchFiles();
+      fetchItems(currentPath);
       setRowSelection({});
     } catch (err) {
       setError("Network error during bulk delete");
@@ -177,7 +339,7 @@ export default function S3Dashboard() {
   };
 
   // Define columns for the table
-  const columns: ColumnDef<S3File>[] = [
+  const columns: ColumnDef<S3Item>[] = [
     {
       id: "select",
       header: ({ table }) => (
@@ -200,16 +362,38 @@ export default function S3Dashboard() {
       enableSorting: false,
     },
     {
-      header: "File Name",
+      header: "Name",
       accessorKey: "name",
-      cell: ({ row }) => <div className="font-medium break-all">{row.getValue("name")}</div>,
+      cell: ({ row }) => {
+        const item = row.original;
+        return (
+          <div className="font-medium break-all flex items-center gap-2">
+            {item.type === "folder" ? (
+              <>
+                <FolderOpen className="h-4 w-4 text-blue-500" />
+                <span
+                  className="cursor-pointer hover:underline text-blue-600"
+                  onClick={() => handleFolderClick(item.fullPath)}
+                >
+                  {item.name}
+                </span>
+              </>
+            ) : (
+              <>
+                <FileIcon className="h-4 w-4 text-gray-500" />
+                <span>{item.name}</span>
+              </>
+            )}
+          </div>
+        );
+      },
       size: 180,
     },
     {
       header: "Type",
       accessorKey: "type",
       cell: ({ row }) => (
-        <Badge>
+        <Badge className={row.original.type === "folder" ? "bg-blue-100 text-blue-800" : ""}>
           {row.getValue("type")}
         </Badge>
       ),
@@ -219,13 +403,13 @@ export default function S3Dashboard() {
       id: "actions",
       header: "Actions",
       cell: ({ row }) => {
-        const file = row.original;
+        const item = row.original;
         return (
           <div className="flex gap-2 justify-center">
             <Button
               variant="outline"
               size="sm"
-              onClick={() => handleDownload(file.name)}
+              onClick={() => handleDownload(item)}
               disabled={!loggedIn}
               title="Download"
             >
@@ -234,7 +418,7 @@ export default function S3Dashboard() {
             <Button
               variant="destructive"
               size="sm"
-              onClick={() => handleDelete(file.name)}
+              onClick={() => handleDelete(item)}
               disabled={!loggedIn}
               title="Delete"
             >
@@ -248,7 +432,7 @@ export default function S3Dashboard() {
   ];
 
   const table = useReactTable({
-    data: files,
+    data: items,
     columns,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
@@ -273,7 +457,23 @@ export default function S3Dashboard() {
   return (
     <div className="max-w-4xl mx-auto p-6 bg-background rounded-lg shadow-md flex flex-col gap-6 min-h-[80vh] mt-8">
       <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold">S3 File Manager</h2>
+        <div>
+          <h2 className="text-2xl font-bold">S3 File Manager</h2>
+          {/* Breadcrumb navigation */}
+          <div className="flex items-center text-sm text-gray-600 mt-2">
+            {breadcrumbs.map((crumb, index) => (
+              <div key={crumb.path} className="flex items-center">
+                {index > 0 && <span className="mx-2">/</span>}
+                <button
+                  onClick={() => handleBreadcrumbClick(crumb.path)}
+                  className="hover:underline hover:text-blue-600"
+                >
+                  {crumb.name}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
         <Button
           variant="outline"
           onClick={() => {
@@ -287,23 +487,113 @@ export default function S3Dashboard() {
       </div>
 
       <div className="space-y-4">
-        <form onSubmit={handleUpload} className="flex flex-wrap gap-3 items-center">
-          <div className="flex-1 min-w-[200px]">
+        <div className="flex flex-wrap gap-3 items-start">
+          {/* Unified upload interface */}
+          <div className="flex flex-col gap-4 w-full">
+            <div className="flex flex-wrap gap-3 items-center">
+              <div className="flex-1 min-w-[200px]">
+                <input
+                  type="file"
+                  onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+                  className="w-full border rounded p-2"
+                  disabled={!loggedIn || uploading}
+                />
+              </div>
+              <Button
+                type="button"
+                onClick={() => {
+                  if (selectedFile) {
+                    handleUpload(new Event('submit') as any);
+                  }
+                }}
+                disabled={uploading || !selectedFile || !loggedIn}
+                className="flex items-center gap-2"
+              >
+                <Upload className="h-4 w-4" />
+                {uploading ? "Uploading..." : "Upload File"}
+              </Button>
+            </div>
+
+            <div className="flex flex-wrap gap-3 items-center">
+              <div className="flex-1 flex gap-2">
+                <Button
+                  type="button"
+                  onClick={createFolder}
+                  disabled={uploading || !loggedIn}
+                  variant="outline"
+                  className="flex items-center gap-2"
+                >
+                  <Folder className="h-4 w-4" />
+                  New Folder
+                </Button>
+
+                <Button
+                  type="button"
+                  onClick={() => {
+                    // Create a file input that accepts folders
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.multiple = true;
+                    // @ts-ignore
+                    input.webkitdirectory = true;
+                    // @ts-ignore
+                    input.directory = true;
+
+                    // Handle the file selection
+                    input.onchange = (e) => handleFolderUpload(e as any);
+
+                    // Trigger the file dialog
+                    input.click();
+                  }}
+                  disabled={uploading || !loggedIn}
+                  variant="outline"
+                  className="flex items-center gap-2"
+                >
+                  <Folder className="h-4 w-4" />
+                  Upload Folder
+                </Button>
+
+                <Button
+                  type="button"
+                  onClick={() => {
+                    // Create a file input that accepts multiple files
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.multiple = true;
+
+                    // Handle the file selection
+                    input.onchange = (e) => handleFileUploadToFolder(e as any);
+
+                    // Trigger the file dialog
+                    input.click();
+                  }}
+                  disabled={uploading || !loggedIn}
+                  variant="outline"
+                  className="flex items-center gap-2"
+                >
+                  <Upload className="h-4 w-4" />
+                  Upload to Folder
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          {/* Hidden inputs for folder upload */}
+          <div className="hidden">
             <input
+              ref={folderInputRef}
               type="file"
-              onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
-              className="w-full border rounded p-2"
+              // @ts-ignore - webkitdirectory is not in the standard HTML attributes but is supported by browsers
+              webkitdirectory=""
+              // @ts-ignore - directory is not in the standard HTML attributes but is supported by browsers
+              directory=""
+              multiple
+              onChange={handleFolderUpload}
               disabled={!loggedIn || uploading}
             />
           </div>
-          <Button
-            type="submit"
-            disabled={uploading || !selectedFile || !loggedIn}
-            className="flex items-center gap-2"
-          >
-            <Upload className="h-4 w-4" />
-            {uploading ? "Uploading..." : "Upload File"}
-          </Button>
+
+          {/* Bulk delete button */}
           {Object.keys(rowSelection).length > 0 && (
             <Button
               variant="destructive"
@@ -316,7 +606,7 @@ export default function S3Dashboard() {
               Delete Selected
             </Button>
           )}
-        </form>
+        </div>
 
         {error && <div className="text-destructive text-sm">{error}</div>}
 
