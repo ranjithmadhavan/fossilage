@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
-// Dummy credentials for demonstration
+// Credentials from environment variables with fallbacks
 const DEMO_USER = {
-  username: "admin",
-  password: "admin",
+  username: process.env.DEMO_USERNAME || "admin",
+  password: process.env.DEMO_PASSWORD || "admin@1234",
 };
 
 export async function POST(req: NextRequest) {
